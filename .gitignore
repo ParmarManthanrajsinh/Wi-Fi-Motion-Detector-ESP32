@@ -1,0 +1,15 @@
+# ESP-IDF / ESP32 Project
+build/
+sdkconfig.old
+managed_components/
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

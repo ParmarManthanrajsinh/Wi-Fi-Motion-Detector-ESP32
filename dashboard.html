@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Motion Radar</title>
+    <meta name="description" content="Real-time 3D Wi-Fi signal visualization and motion detection dashboard for ESP32">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-card: rgba(255,255,255,0.03);
+            --bg-card-hover: rgba(255,255,255,0.05);
+            --border: rgba(255,255,255,0.06);
+            --text-primary: #f0f0f5;
+            --text-secondary: rgba(255,255,255,0.5);
+            --text-tertiary: rgba(255,255,255,0.3);
+            --accent: #6366f1;
+            --accent-glow: rgba(99,102,241,0.15);
+            --green: #22c55e;
+            --green-glow: rgba(34,197,94,0.12);
+            --red: #ef4444;
+            --red-glow: rgba(239,68,68,0.12);
+            --yellow: #eab308;
+            --yellow-glow: rgba(234,179,8,0.12);
+            --radius: 16px;
+            --radius-sm: 10px;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+        * { scrollbar-color: rgba(255,255,255,0.1) transparent; scrollbar-width: thin; }
+
+        /* Layout */
+        .app { max-width: 1120px; margin: 0 auto; padding: 32px 24px; }
+
+        /* Header */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+        .header-left h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.03em; }
+        .header-left p { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+        .connect-btn {
+            display: inline-flex; align-items: center; gap: 8px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            color: var(--text-primary); padding: 10px 20px; font-size: 13px;
+            border-radius: 50px; cursor: pointer; font-weight: 500;
+            transition: all 0.2s ease; font-family: inherit;
+        }
+        .connect-btn:hover { background: var(--bg-card-hover); border-color: rgba(255,255,255,0.12); }
+        .connect-btn.connected { border-color: var(--green); color: var(--green); }
+        .connect-btn .dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: var(--text-tertiary); transition: background 0.3s;
+        }
+        .connect-btn.connected .dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+
+        /* Status Pill */
+        .status-bar { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+        .pill {
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 8px 16px; border-radius: 50px; font-size: 12px;
+            font-weight: 500; letter-spacing: 0.03em; text-transform: uppercase;
+            border: 1px solid var(--border); background: var(--bg-card);
+            color: var(--text-secondary); transition: all 0.4s ease;
+        }
+        .pill.safe { color: var(--green); border-color: rgba(34,197,94,0.2); background: var(--green-glow); }
+        .pill.danger { color: var(--red); border-color: rgba(239,68,68,0.2); background: var(--red-glow); }
+        .pill.calibrating { color: var(--yellow); border-color: rgba(234,179,8,0.2); background: var(--yellow-glow); }
+        .pill .pulse {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: currentColor; animation: pulse-anim 2s infinite;
+        }
+        @keyframes pulse-anim {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.7); }
+        }
+
+        /* Grid */
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .grid-3d { grid-column: 1 / -1; }
+
+        /* Card */
+        .card {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 20px;
+            transition: border-color 0.2s;
+        }
+        .card:hover { border-color: rgba(255,255,255,0.1); }
+        .card-label {
+            font-size: 11px; font-weight: 500; text-transform: uppercase;
+            letter-spacing: 0.08em; color: var(--text-tertiary); margin-bottom: 8px;
+        }
+        .card-value { font-size: 32px; font-weight: 700; letter-spacing: -0.04em; }
+        .card-value .unit { font-size: 14px; font-weight: 400; color: var(--text-secondary); margin-left: 4px;}
+
+        /* 3D Canvas */
+        #three-container {
+            width: 100%; height: 380px; border-radius: var(--radius-sm);
+            overflow: hidden; position: relative; background: #050508;
+        }
+        #three-container canvas { display: block; width: 100% !important; height: 100% !important; }
+
+        /* 2D Chart */
+        .chart-wrap { margin-top: 16px; }
+        .chart-wrap canvas { width: 100%; height: 160px; border-radius: var(--radius-sm); background: #050508; display: block; }
+
+        /* Wi-Fi Config */
+        .wifi-section { margin-top: 16px; }
+        .wifi-section .card { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+        .field label {
+            display: block; font-size: 11px; font-weight: 500;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-tertiary); margin-bottom: 6px;
+        }
+        .field input {
+            width: 100%; padding: 10px 14px; font-size: 14px;
+            background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); color: var(--text-primary);
+            font-family: inherit; transition: border-color 0.2s; outline: none;
+        }
+        .field input::placeholder { color: var(--text-tertiary); }
+        .field input:focus { border-color: var(--accent); }
+        .send-btn {
+            padding: 10px 24px; font-size: 13px; font-weight: 600;
+            background: var(--accent); color: #fff; border: none;
+            border-radius: var(--radius-sm); cursor: pointer;
+            font-family: inherit; transition: opacity 0.2s; white-space: nowrap;
+        }
+        .send-btn:hover { opacity: 0.85; }
+        .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .wifi-msg { grid-column: 1 / -1; font-size: 12px; color: var(--text-secondary); margin-top: 4px; min-height: 18px; }
+
+        /* Console */
+        .console-section { margin-top: 16px; }
+        .console {
+            background: #050508; border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 14px;
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 11px; color: rgba(255,255,255,0.45);
+            height: 110px; overflow-y: auto; line-height: 1.7;
+        }
+        .console .log-line { opacity: 0; animation: fade-in 0.3s forwards; }
+        @keyframes fade-in { to { opacity: 1; } }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .grid { grid-template-columns: 1fr; }
+            .wifi-section .card { grid-template-columns: 1fr; }
+            .header { flex-direction: column; gap: 16px; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>Motion Radar</h1>
+                <p>ESP32 Wi-Fi Signal Intelligence</p>
+            </div>
+            <button class="connect-btn" id="connectBtn" onclick="toggleConnect()">
+                <span class="dot"></span>
+                Connect USB
+            </button>
+        </header>
+
+        <!-- Status -->
+        <div class="status-bar">
+            <div class="pill" id="statusPill">
+                <span class="pulse"></span>
+                <span id="statusText">DISCONNECTED</span>
+            </div>
+        </div>
+
+        <!-- Metrics -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-label">Current RSSI</div>
+                <div class="card-value"><span id="rssi">--</span><span class="unit">dBm</span></div>
+            </div>
+            <div class="card">
+                <div class="card-label">Baseline (EMA)</div>
+                <div class="card-value"><span id="baseline">--</span><span class="unit">dBm</span></div>
+            </div>
+        </div>
+
+        <!-- 3D Visualization -->
+        <div class="grid">
+            <div class="card grid-3d">
+                <div class="card-label">Signal Field — 3D</div>
+                <div id="three-container"></div>
+            </div>
+        </div>
+
+        <!-- 2D Chart -->
+        <div class="chart-wrap">
+            <div class="card">
+                <div class="card-label">Signal History</div>
+                <canvas id="chart" width="1200" height="160"></canvas>
+            </div>
+        </div>
+
+        <!-- Wi-Fi Config -->
+        <div class="wifi-section">
+            <div class="card">
+                <div class="field">
+                    <label>SSID</label>
+                    <input type="text" id="ssid" placeholder="Network name">
+                </div>
+                <div class="field">
+                    <label>Password</label>
+                    <input type="password" id="password" placeholder="••••••••">
+                </div>
+                <button class="send-btn" id="saveBtn" onclick="saveWifi()" disabled>Send</button>
+                <div class="wifi-msg" id="wifi-msg">Connect via USB to configure Wi-Fi</div>
+            </div>
+        </div>
+
+        <!-- Console -->
+        <div class="console-section">
+            <div class="card" style="padding: 0;">
+                <div class="console" id="consoleBox">
+                    <div class="log-line">Ready — waiting for connection…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ─── State ────────────────────────────────────
+        const HISTORY_LEN = 100;
+        let historyRssi = new Array(HISTORY_LEN).fill(-70);
+        let historyBaseline = new Array(HISTORY_LEN).fill(-70);
+        let currentRssi = -70;
+        let currentBaseline = -70;
+        let motionDetected = false;
+        let isCalibrating = false;
+
+        // Serial
+        let port, reader, writer, keepReading = false;
+
+        // ─── 3D Scene ─────────────────────────────────
+        const container = document.getElementById('three-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(55, container.clientWidth / container.clientHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+        camera.position.set(0, 12, 22);
+        camera.lookAt(0, 0, 0);
+
+        // Particles — signal field
+        const PARTICLE_COUNT = 2400;
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
+        const sizes = new Float32Array(PARTICLE_COUNT);
+        const originalY = new Float32Array(PARTICLE_COUNT);
+        const particleGeo = new THREE.BufferGeometry();
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.random() * 14;
+            positions[i * 3] = Math.cos(angle) * radius;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 4;
+            positions[i * 3 + 2] = Math.sin(angle) * radius;
+            originalY[i] = positions[i * 3 + 1];
+            colors[i * 3] = 0.39; colors[i * 3 + 1] = 0.4; colors[i * 3 + 2] = 0.95;
+            sizes[i] = Math.random() * 2 + 1;
+        }
+        particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particleGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        particleGeo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+        const particleMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uPixelRatio: { value: renderer.getPixelRatio() },
+            },
+            vertexShader: `
+                attribute float size;
+                attribute vec3 color;
+                varying vec3 vColor;
+                uniform float uTime;
+                uniform float uPixelRatio;
+                void main() {
+                    vColor = color;
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    gl_PointSize = size * uPixelRatio * (80.0 / -mvPosition.z);
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor;
+                void main() {
+                    float d = length(gl_PointCoord - vec2(0.5));
+                    if (d > 0.5) discard;
+                    float alpha = smoothstep(0.5, 0.1, d) * 0.7;
+                    gl_FragColor = vec4(vColor, alpha);
+                }
+            `,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+        const particles = new THREE.Points(particleGeo, particleMat);
+        scene.add(particles);
+
+        // Concentric rings (radar reference)
+        for (let r = 3; r <= 14; r += 3) {
+            const ringGeo = new THREE.RingGeometry(r - 0.02, r + 0.02, 80);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.04, side: THREE.DoubleSide });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.rotation.x = -Math.PI / 2;
+            scene.add(ring);
+        }
+
+        // Center beacon
+        const beaconGeo = new THREE.SphereGeometry(0.4, 32, 32);
+        const beaconMat = new THREE.MeshBasicMaterial({ color: 0x6366f1 });
+        const beacon = new THREE.Mesh(beaconGeo, beaconMat);
+        scene.add(beacon);
+
+        // Wave rings that pulse outward
+        const waveRings = [];
+        for (let i = 0; i < 3; i++) {
+            const geo = new THREE.RingGeometry(0.5, 0.6, 64);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x6366f1, transparent: true, opacity: 0, side: THREE.DoubleSide });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.rotation.x = -Math.PI / 2;
+            mesh.userData = { phase: i * (Math.PI * 2 / 3), speed: 0.6 };
+            waveRings.push(mesh);
+            scene.add(mesh);
+        }
+
+        let clock = new THREE.Clock();
+        let mouseX = 0, mouseY = 0;
+        document.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
+            mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+        });
+
+        function animate3D() {
+            requestAnimationFrame(animate3D);
+            const t = clock.getElapsedTime();
+            particleMat.uniforms.uTime.value = t;
+
+            // Signal strength maps to displacement intensity
+            const signalStrength = Math.max(0, Math.min(1, (currentRssi + 100) / 60));
+            const motionIntensity = motionDetected ? 1.5 : 0.3;
+            const posArr = particleGeo.attributes.position.array;
+            const colArr = particleGeo.attributes.color.array;
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const px = posArr[i * 3];
+                const pz = posArr[i * 3 + 2];
+                const dist = Math.sqrt(px * px + pz * pz);
+
+                // Wave-like vertical displacement based on signal
+                const wave = Math.sin(dist * 0.8 - t * 2) * signalStrength * motionIntensity;
+                posArr[i * 3 + 1] = originalY[i] + wave;
+
+                // Color: calm = indigo, motion = red-shift
+                if (motionDetected) {
+                    const blend = Math.sin(t * 3 + dist) * 0.5 + 0.5;
+                    colArr[i * 3] = 0.39 + blend * 0.55;
+                    colArr[i * 3 + 1] = 0.4 - blend * 0.3;
+                    colArr[i * 3 + 2] = 0.95 - blend * 0.7;
+                } else if (isCalibrating) {
+                    colArr[i * 3] = 0.92;
+                    colArr[i * 3 + 1] = 0.7;
+                    colArr[i * 3 + 2] = 0.03;
+                } else {
+                    colArr[i * 3] = 0.13 + signalStrength * 0.26;
+                    colArr[i * 3 + 1] = 0.77;
+                    colArr[i * 3 + 2] = 0.37 + signalStrength * 0.58;
+                }
+            }
+            particleGeo.attributes.position.needsUpdate = true;
+            particleGeo.attributes.color.needsUpdate = true;
+
+            // Beacon pulse
+            const beaconScale = 1 + Math.sin(t * 3) * 0.15 * (motionDetected ? 3 : 1);
+            beacon.scale.set(beaconScale, beaconScale, beaconScale);
+            beacon.material.color.setHex(motionDetected ? 0xef4444 : 0x6366f1);
+
+            // Wave rings
+            waveRings.forEach(ring => {
+                const phase = (t * ring.userData.speed + ring.userData.phase) % (Math.PI * 2);
+                const progress = phase / (Math.PI * 2);
+                const scale = 1 + progress * 25 * signalStrength;
+                ring.scale.set(scale, scale, scale);
+                ring.material.opacity = (1 - progress) * 0.15 * signalStrength;
+                ring.material.color.setHex(motionDetected ? 0xef4444 : 0x6366f1);
+            });
+
+            // Gentle camera sway
+            camera.position.x += (mouseX * 3 - camera.position.x) * 0.02;
+            camera.position.y += (12 - mouseY * 2 - camera.position.y) * 0.02;
+            camera.lookAt(0, 0, 0);
+
+            renderer.render(scene, camera);
+        }
+        animate3D();
+
+        window.addEventListener('resize', () => {
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h);
+        });
+
+        // ─── 2D Chart ─────────────────────────────────
+        const chartCanvas = document.getElementById('chart');
+        const ctx2d = chartCanvas.getContext('2d');
+
+        function drawChart() {
+            const W = chartCanvas.width;
+            const H = chartCanvas.height;
+            ctx2d.clearRect(0, 0, W, H);
+
+            // Grid
+            ctx2d.strokeStyle = 'rgba(255,255,255,0.04)';
+            ctx2d.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = (H / 4) * i;
+                ctx2d.beginPath(); ctx2d.moveTo(0, y); ctx2d.lineTo(W, y); ctx2d.stroke();
+            }
+
+            const mapY = (val) => {
+                let y = ((val + 100) / 60) * H;
+                return H - Math.max(0, Math.min(H, y));
+            };
+
+            // Baseline
+            ctx2d.strokeStyle = 'rgba(99,102,241,0.3)';
+            ctx2d.lineWidth = 1.5;
+            ctx2d.setLineDash([4, 4]);
+            ctx2d.beginPath();
+            for (let i = 0; i < HISTORY_LEN; i++) {
+                const x = (i / (HISTORY_LEN - 1)) * W;
+                const y = mapY(historyBaseline[i]);
+                i === 0 ? ctx2d.moveTo(x, y) : ctx2d.lineTo(x, y);
+            }
+            ctx2d.stroke();
+            ctx2d.setLineDash([]);
+
+            // RSSI line
+            ctx2d.strokeStyle = motionDetected ? '#ef4444' : '#22c55e';
+            ctx2d.lineWidth = 2;
+            ctx2d.shadowColor = ctx2d.strokeStyle;
+            ctx2d.shadowBlur = 8;
+            ctx2d.beginPath();
+            for (let i = 0; i < HISTORY_LEN; i++) {
+                const x = (i / (HISTORY_LEN - 1)) * W;
+                const y = mapY(historyRssi[i]);
+                i === 0 ? ctx2d.moveTo(x, y) : ctx2d.lineTo(x, y);
+            }
+            ctx2d.stroke();
+            ctx2d.shadowBlur = 0;
+        }
+
+        // ─── Console ──────────────────────────────────
+        function logToConsole(text) {
+            const cons = document.getElementById('consoleBox');
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            div.textContent = text;
+            cons.appendChild(div);
+            if (cons.children.length > 200) cons.removeChild(cons.firstChild);
+            cons.scrollTop = cons.scrollHeight;
+        }
+
+        // ─── Serial ───────────────────────────────────
+        async function toggleConnect() {
+            if (!("serial" in navigator)) {
+                alert("Web Serial API not supported. Please use Chrome or Edge.");
+                return;
+            }
+            const btn = document.getElementById('connectBtn');
+            if (port) {
+                keepReading = false;
+                if (reader) await reader.cancel();
+                port = null; reader = null; writer = null;
+                btn.classList.remove('connected');
+                btn.innerHTML = '<span class="dot"></span>Connect USB';
+                document.getElementById('saveBtn').disabled = true;
+                updateStatus('DISCONNECTED', '');
+            } else {
+                try {
+                    port = await navigator.serial.requestPort();
+                    await port.open({ baudRate: 115200 });
+                    await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+                    btn.classList.add('connected');
+                    btn.innerHTML = '<span class="dot"></span>Disconnect';
+                    document.getElementById('saveBtn').disabled = false;
+                    document.getElementById('wifi-msg').innerText = "Connected — ready to send credentials";
+                    logToConsole("Serial connected at 115200 baud");
+
+                    const enc = new TextEncoderStream();
+                    writer = enc.writable.getWriter();
+                    enc.readable.pipeTo(port.writable);
+
+                    keepReading = true;
+                    readLoop();
+                } catch (e) {
+                    logToConsole("Connection failed: " + e.message);
+                }
+            }
+        }
+
+        async function readLoop() {
+            let buf = "";
+            const decoder = new TextDecoderStream();
+            port.readable.pipeTo(decoder.writable);
+            reader = decoder.readable.getReader();
+
+            while (port && port.readable && keepReading) {
+                try {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buf += value;
+
+                    let idx;
+                    while ((idx = buf.indexOf('\n')) >= 0) {
+                        let line = buf.slice(0, idx).replace(/\r/g, '').trim();
+                        buf = buf.slice(idx + 1);
+                        if (!line) continue;
+
+                        try {
+                            const data = JSON.parse(line);
+                            if (data.error) {
+                                updateStatus('NO WI-FI', '');
+                                continue;
+                            }
+
+                            currentRssi = data.rssi;
+                            currentBaseline = data.baseline;
+                            motionDetected = !!data.motion;
+                            isCalibrating = !!data.calibrating;
+
+                            document.getElementById('rssi').innerText = data.rssi;
+                            document.getElementById('baseline').innerText = data.baseline.toFixed(1);
+
+                            if (data.calibrating) updateStatus('CALIBRATING', 'calibrating');
+                            else if (data.motion) updateStatus('MOTION DETECTED', 'danger');
+                            else updateStatus('ROOM CLEAR', 'safe');
+
+                            historyRssi.push(data.rssi); historyRssi.shift();
+                            historyBaseline.push(data.baseline); historyBaseline.shift();
+                            drawChart();
+                        } catch (_) {
+                            logToConsole(line);
+                        }
+                    }
+                } catch (err) {
+                    logToConsole("Read error: " + err);
+                    break;
+                }
+            }
+            if (reader) reader.releaseLock();
+        }
+
+        function updateStatus(text, cls) {
+            const pill = document.getElementById('statusPill');
+            const label = document.getElementById('statusText');
+            label.textContent = text;
+            pill.className = 'pill' + (cls ? ' ' + cls : '');
+        }
+
+        async function saveWifi() {
+            const ssid = document.getElementById('ssid').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const msg = document.getElementById('wifi-msg');
+
+            if (!ssid) { msg.style.color = 'var(--red)'; msg.innerText = "SSID required"; return; }
+            if (!writer) { msg.innerText = "Not connected"; return; }
+
+            await writer.write(JSON.stringify({ ssid, password }) + "\n");
+            msg.style.color = 'var(--green)';
+            msg.innerText = "Credentials sent — ESP32 will reboot";
+        }
+
+        // Initial chart draw
+        drawChart();
+    </script>
+</body>
+</html>
